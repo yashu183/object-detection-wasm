@@ -5,6 +5,12 @@ let session = null;
 let isModelLoaded = false;
 let currentImage = null;
 
+// Camera variables
+let cameraStream = null;
+let detectionInterval = null;
+let isDetecting = false;
+let currentMode = 'image'; // 'image' or 'camera'
+
 // COCO dataset class names (80 classes)
 const classNames = [
     'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
@@ -33,6 +39,16 @@ const detectBtn = document.getElementById('detectBtn');
 const clearBtn = document.getElementById('clearBtn');
 const buttonContainer = document.getElementById('buttonContainer');
 
+// Camera elements
+const imageModeBtn = document.getElementById('imageMode');
+const cameraModeBtn = document.getElementById('cameraMode');
+const cameraArea = document.getElementById('cameraArea');
+const cameraVideo = document.getElementById('cameraVideo');
+const detectionCanvas = document.getElementById('detectionCanvas');
+const startCameraBtn = document.getElementById('startCameraBtn');
+const stopCameraBtn = document.getElementById('stopCameraBtn');
+const cameraControls = document.getElementById('cameraControls');
+
 const statusEl = document.getElementById('status');
 const imageDisplay = document.getElementById('imageDisplay');
 const detectionsList = document.getElementById('detectionsList');
@@ -50,14 +66,22 @@ async function initApp() {
     
     // Setup event listeners
     imageInput.addEventListener('change', handleImageUpload);
-    uploadArea.addEventListener('click', () => imageInput.click());
+    uploadArea.addEventListener('click', () => {
+        console.log('Upload area clicked, triggering file input...');
+        imageInput.click();
+    });
     detectBtn.addEventListener('click', detectObjects);
     if (clearBtn) {
         clearBtn.addEventListener('click', clearDetectionResults);
     } else {
         console.error('clearBtn element not found!');
     }
-
+    
+    // Camera mode event listeners
+    imageModeBtn.addEventListener('click', () => switchMode('image'));
+    cameraModeBtn.addEventListener('click', () => switchMode('camera'));
+    startCameraBtn.addEventListener('click', startCamera);
+    stopCameraBtn.addEventListener('click', stopCamera);
     
     // Configure ONNX Runtime
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/';
@@ -102,27 +126,350 @@ async function loadModel() {
 
 // Handle image upload
 function handleImageUpload(event) {
+    console.log('Image upload triggered', event);
     const file = event.target.files[0];
+    console.log('Selected file:', file);
     if (!file) return;
     
     const reader = new FileReader();
     reader.onload = function(e) {
+        console.log('File read successfully, loading image...');
         loadImageFromDataUrl(e.target.result);
     };
     reader.readAsDataURL(file);
+}
+
+// Switch between image and camera modes
+function switchMode(mode) {
+    currentMode = mode;
+    
+    console.log('Switching to mode:', mode, 'currentImage:', currentImage);
+    
+    // Stop camera if switching to image mode (but don't clear results unless camera was actually running)
+    if (mode === 'image' && cameraStream) {
+        stopCamera();
+    }
+    
+    // Update mode buttons
+    imageModeBtn.classList.toggle('active', mode === 'image');
+    cameraModeBtn.classList.toggle('active', mode === 'camera');
+    
+    // Show/hide appropriate areas
+    if (mode === 'image') {
+        cameraArea.classList.add('hidden');
+        cameraControls.classList.add('hidden');
+        
+        // Show image display and buttons if there's a current image
+        if (currentImage) {
+            console.log('Has current image - showing image display');
+            uploadArea.classList.add('hidden');
+            imageDisplay.classList.remove('hidden');
+            buttonContainer.classList.remove('hidden');
+        } else {
+            // No current image - show upload area only
+            console.log('No current image - showing upload area');
+            uploadArea.classList.remove('hidden');
+            imageDisplay.classList.add('hidden');
+            buttonContainer.classList.add('hidden');
+        }
+        
+    } else {
+        // Camera mode
+        uploadArea.classList.add('hidden');
+        imageDisplay.classList.add('hidden');
+        buttonContainer.classList.add('hidden');
+        cameraArea.classList.remove('hidden');
+        cameraControls.classList.remove('hidden');
+    }
+}
+
+// Start camera
+async function startCamera() {
+    try {
+        statusEl.className = 'status loading';
+        statusEl.textContent = 'Starting camera...';
+        
+        // Clear image results when actually starting camera
+        console.log('Starting camera - clearing currentImage');
+        currentImage = null;
+        clearResults();
+        
+        // Clear the image display content
+        imageDisplay.innerHTML = '';
+        imageDisplay.classList.add('hidden');
+        buttonContainer.classList.add('hidden');
+        
+        console.log('After clearing - currentImage:', currentImage);
+        
+        // Request camera access
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                facingMode: 'environment' // Try to use back camera on mobile
+            }
+        });
+        
+        cameraVideo.srcObject = cameraStream;
+        
+        // Wait for video to load
+        await new Promise(resolve => {
+            cameraVideo.onloadedmetadata = resolve;
+        });
+        
+        // Setup canvas for detections
+        setupDetectionCanvas();
+        
+        // Start real-time detection
+        startRealTimeDetection();
+        
+        // Update UI
+        startCameraBtn.classList.add('hidden');
+        stopCameraBtn.classList.remove('hidden');
+        
+        statusEl.className = 'status success';
+        statusEl.textContent = 'Camera started! Real-time detection active.';
+        
+        console.log('Camera started successfully');
+        
+    } catch (error) {
+        console.error('Camera access error:', error);
+        statusEl.className = 'status error';
+        statusEl.textContent = 'Camera access denied. Please check permissions.';
+    }
+}
+
+// Stop camera
+function stopCamera() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+        cameraVideo.srcObject = null;
+    }
+    
+    if (detectionInterval) {
+        clearInterval(detectionInterval);
+        detectionInterval = null;
+    }
+    
+    isDetecting = false;
+    
+    // Update UI
+    startCameraBtn.classList.remove('hidden');
+    stopCameraBtn.classList.add('hidden');
+    
+    // Clear canvas
+    if (detectionCanvas) {
+        const ctx = detectionCanvas.getContext('2d');
+        ctx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+    }
+    
+    // Clear results
+    clearResults();
+    
+    // If camera was started, clear current image state
+    if (currentImage === null) {
+        // Make sure button container is hidden when no image
+        buttonContainer.classList.add('hidden');
+    }
+    
+    statusEl.className = 'status success';
+    statusEl.textContent = 'Camera stopped.';
+    
+    console.log('Camera stopped');
+}
+
+// Setup detection canvas to overlay on video
+function setupDetectionCanvas() {
+    detectionCanvas.width = cameraVideo.videoWidth;
+    detectionCanvas.height = cameraVideo.videoHeight;
+    
+    // Position canvas over video
+    detectionCanvas.style.position = 'absolute';
+    detectionCanvas.style.top = '0';
+    detectionCanvas.style.left = '0';
+    detectionCanvas.style.width = cameraVideo.offsetWidth + 'px';
+    detectionCanvas.style.height = cameraVideo.offsetHeight + 'px';
+}
+
+// Start real-time detection loop
+function startRealTimeDetection() {
+    if (!isModelLoaded) {
+        console.log('Model not loaded yet');
+        return;
+    }
+    
+    isDetecting = true;
+    
+    // Run detection every 200ms (5 FPS)
+    detectionInterval = setInterval(() => {
+        if (isDetecting && cameraVideo.readyState === 4) {
+            detectObjectsFromCamera();
+        }
+    }, 200);
+}
+
+// Detect objects from camera feed
+async function detectObjectsFromCamera() {
+    if (!isModelLoaded || !cameraVideo || isDetecting === false) return;
+    
+    try {
+        const startTime = performance.now();
+        
+        // Create a temporary canvas to capture video frame
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCanvas.width = cameraVideo.videoWidth;
+        tempCanvas.height = cameraVideo.videoHeight;
+        
+        // Draw current video frame
+        tempCtx.drawImage(cameraVideo, 0, 0);
+        
+        // Create a temporary image element for processing (don't update currentImage)
+        const tempImg = new Image();
+        tempImg.width = tempCanvas.width;
+        tempImg.height = tempCanvas.height;
+        
+        // Convert canvas to image data
+        const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        
+        // Preprocess for YOLO
+        const preprocessed = preprocessImageData(imageData, tempCanvas.width, tempCanvas.height);
+        
+        // Run inference
+        const inferenceStart = performance.now();
+        const detections = await runInferenceForCamera(preprocessed, tempImg);
+        const inferenceTime = performance.now() - inferenceStart;
+        
+        // Draw detections on overlay canvas
+        drawCameraDetections(detections, tempCanvas.width, tempCanvas.height);
+        
+        // Update metrics
+        const totalTime = performance.now() - startTime;
+        updateMetrics(inferenceTime, totalTime, detections.length);
+        
+        // Update detections list
+        updateDetectionsList(detections);
+        
+    } catch (error) {
+        console.error('Camera detection error:', error);
+    }
+}
+
+// Preprocess image data for YOLO (modified for camera frames)
+function preprocessImageData(imageData, width, height) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // YOLO input size
+    const inputSize = 640;
+    canvas.width = inputSize;
+    canvas.height = inputSize;
+    
+    // Calculate scaling and padding
+    const scale = Math.min(inputSize / width, inputSize / height);
+    const scaledWidth = width * scale;
+    const scaledHeight = height * scale;
+    const offsetX = (inputSize - scaledWidth) / 2;
+    const offsetY = (inputSize - scaledHeight) / 2;
+    
+    // Fill with gray and draw scaled image
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, inputSize, inputSize);
+    
+    // Create image from imageData and draw it
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    tempCtx.putImageData(imageData, 0, 0);
+    
+    ctx.drawImage(tempCanvas, offsetX, offsetY, scaledWidth, scaledHeight);
+    
+    // Get processed image data and convert to tensor
+    const processedImageData = ctx.getImageData(0, 0, inputSize, inputSize);
+    const { data } = processedImageData;
+    
+    // Convert to RGB and normalize [0, 255] -> [0, 1]
+    const float32Data = new Float32Array(3 * inputSize * inputSize);
+    for (let i = 0; i < inputSize * inputSize; i++) {
+        float32Data[i] = data[i * 4] / 255.0; // Red
+        float32Data[inputSize * inputSize + i] = data[i * 4 + 1] / 255.0; // Green
+        float32Data[2 * inputSize * inputSize + i] = data[i * 4 + 2] / 255.0; // Blue
+    }
+    
+    return {
+        data: float32Data,
+        scale: scale,
+        offsetX: offsetX,
+        offsetY: offsetY
+    };
+}
+
+// Draw detections on camera overlay
+function drawCameraDetections(detections, videoWidth, videoHeight) {
+    const ctx = detectionCanvas.getContext('2d');
+    
+    // Clear previous detections
+    ctx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+    
+    // Calculate scaling factor from video to canvas
+    const scaleX = detectionCanvas.width / videoWidth;
+    const scaleY = detectionCanvas.height / videoHeight;
+    
+    // Draw bounding boxes
+    detections.forEach((detection, index) => {
+        const [x, y, w, h] = detection.bbox;
+        const color = colors[detection.classId % colors.length];
+        
+        // Scale coordinates to canvas size
+        const canvasX = x * scaleX;
+        const canvasY = y * scaleY;
+        const canvasW = w * scaleX;
+        const canvasH = h * scaleY;
+        
+        // Draw bounding box
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(canvasX, canvasY, canvasW, canvasH);
+        
+        // Draw label background
+        const label = `${detection.class} ${(detection.confidence * 100).toFixed(1)}%`;
+        ctx.font = 'bold 16px Arial';
+        const textMetrics = ctx.measureText(label);
+        const textWidth = textMetrics.width;
+        const textHeight = 20;
+        
+        // Ensure label stays within canvas bounds
+        const labelX = Math.min(canvasX, detectionCanvas.width - textWidth - 10);
+        const labelY = Math.max(textHeight, canvasY);
+        
+        ctx.fillStyle = color;
+        ctx.fillRect(labelX, labelY - textHeight, textWidth + 10, textHeight + 5);
+        
+        // Draw label text
+        ctx.fillStyle = 'white';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, labelX + 5, labelY - textHeight + 2);
+    });
 }
 
 
 
 // Load image from data URL
 function loadImageFromDataUrl(dataUrl) {
+    console.log('Loading image from data URL...');
     const img = new Image();
-    img.onload = () => loadImageFromElement(img);
+    img.onload = () => {
+        console.log('Image loaded from data URL, calling loadImageFromElement...');
+        loadImageFromElement(img);
+    };
     img.src = dataUrl;
 }
 
 // Load image from element
 function loadImageFromElement(img) {
+    console.log('Loading image from element, dimensions:', img.width, 'x', img.height);
     currentImage = img;
     
     // Clear previous results
@@ -281,6 +628,23 @@ async function runInference(preprocessed) {
     return processYOLOOutput(output.data, preprocessed);
 }
 
+// Run YOLO inference for camera (separate function to avoid currentImage dependency)
+async function runInferenceForCamera(preprocessed, tempImg) {
+    // Create input tensor
+    const inputTensor = new ort.Tensor('float32', preprocessed.data, [1, 3, 640, 640]);
+    
+    // Prepare feeds
+    const feeds = {};
+    feeds[session.inputNames[0]] = inputTensor;
+    
+    // Run the model
+    const outputData = await session.run(feeds);
+    const output = outputData[session.outputNames[0]];
+    
+    // Process output with temporary image
+    return processYOLOOutputForCamera(output.data, preprocessed, tempImg);
+}
+
 // Process YOLO output
 function processYOLOOutput(output, preprocessed) {
     const detections = [];
@@ -348,6 +712,74 @@ function processYOLOOutput(output, preprocessed) {
     // Apply Non-Maximum Suppression
     const finalDetections = applyNMS(detections, 0.4);
     console.log(`After NMS: ${finalDetections.length}`);
+    
+    return finalDetections;
+}
+
+// Process YOLO output for camera (separate function to avoid currentImage dependency)
+function processYOLOOutputForCamera(output, preprocessed, tempImg) {
+    const detections = [];
+    const confidenceThreshold = 0.4; // Reasonable threshold
+    const numDetections = 8400; // YOLOv8 outputs 8400 detections
+    
+    // YOLOv8 output format: [1, 84, 8400]
+    // 84 = 4 bbox coords (x_center, y_center, width, height) + 80 class scores
+    
+    for (let i = 0; i < numDetections; i++) {
+        // Get bounding box coordinates (center format) - the output is [84, 8400] after removing batch dimension
+        const x_center = output[0 * numDetections + i];  // x center
+        const y_center = output[1 * numDetections + i];  // y center
+        const width = output[2 * numDetections + i];     // width
+        const height = output[3 * numDetections + i];    // height
+        
+        // Find best class and confidence
+        let maxScore = 0;
+        let maxClass = 0;
+        
+        for (let c = 0; c < 80; c++) {
+            const score = output[(4 + c) * numDetections + i];
+            if (score > maxScore) {
+                maxScore = score;
+                maxClass = c;
+            }
+        }
+        
+        // Only keep detections with high confidence
+        if (maxScore > confidenceThreshold) {
+            // Convert from normalized coordinates to pixel coordinates
+            const x_pixel = x_center * (640 / 640);  // Model uses 640x640
+            const y_pixel = y_center * (640 / 640);
+            const w_pixel = width * (640 / 640);
+            const h_pixel = height * (640 / 640);
+            
+            // Convert from model space to original image space
+            const originalX = (x_pixel - w_pixel/2 - preprocessed.offsetX) / preprocessed.scale;
+            const originalY = (y_pixel - h_pixel/2 - preprocessed.offsetY) / preprocessed.scale;
+            const originalW = w_pixel / preprocessed.scale;
+            const originalH = h_pixel / preprocessed.scale;
+            
+            // Ensure coordinates are within image bounds
+            const x1 = Math.max(0, originalX);
+            const y1 = Math.max(0, originalY);
+            const x2 = Math.min(tempImg.width, originalX + originalW);
+            const y2 = Math.min(tempImg.height, originalY + originalH);
+            const boxW = x2 - x1;
+            const boxH = y2 - y1;
+            
+            // Only keep reasonable sized boxes
+            if (boxW > 10 && boxH > 10) {
+                detections.push({
+                    class: classNames[maxClass],
+                    confidence: maxScore,
+                    bbox: [x1, y1, boxW, boxH],
+                    classId: maxClass
+                });
+            }
+        }
+    }
+    
+    // Apply Non-Maximum Suppression
+    const finalDetections = applyNMS(detections, 0.4);
     
     return finalDetections;
 }
@@ -459,7 +891,7 @@ function updateMetrics(inferenceTime, totalTime, objectCount) {
 // Update detections list
 function updateDetectionsList(detections) {
     if (detections.length === 0) {
-        detectionsList.innerHTML = '<h3>Results</h3> <p style="color: #666; margin-bottom: 20px; text-align: center;">No objects detected</p>';
+        detectionsList.innerHTML = '<p style="color: #666; margin: 20px 0; text-align: center;">No objects detected</p>';
         return;
     }
     
@@ -470,27 +902,34 @@ function updateDetectionsList(detections) {
         </div>
     `).join('');
     
-    detectionsList.innerHTML = `<h3>Results</h3> ${html}`;
+    detectionsList.innerHTML = `${html}`;
 }
 
 // Clear detection results and show detect button again
 function clearDetectionResults() {
     console.log('Clearing detection results');
+    
+    if (currentMode === 'camera') {
+        stopCamera();
+    }
+    
     // Clear results
     clearResults();
     
     // Reset current image
     currentImage = null;
     
-    // Show upload area and hide image display
-    uploadArea.classList.remove('hidden');
-    imageDisplay.classList.add('hidden');
-    buttonContainer.classList.add('hidden');
+    if (currentMode === 'image') {
+        // Show upload area and hide image display
+        uploadArea.classList.remove('hidden');
+        imageDisplay.classList.add('hidden');
+        buttonContainer.classList.add('hidden');
+        
+        // Clear image display content
+        imageDisplay.innerHTML = '';
+    }
     
-    // Clear image display content
-    imageDisplay.innerHTML = '';
-    
-    console.log('Detection results cleared - back to upload state');
+    console.log('Detection results cleared - back to initial state');
 }
 
 // Clear results
@@ -498,7 +937,7 @@ function clearResults() {
     inferenceTimeEl.textContent = '-';
     processingTimeEl.textContent = '-';
     objectCountEl.textContent = '-';
-    detectionsList.innerHTML = '<h3>Results</h3> <p style="color: #666; margin-bottom: 20px; text-align: center;">Run detection to see results</p>';
+    detectionsList.innerHTML = '<p style="color: #666; margin: 20px 0; text-align: center;">Run detection to see results</p>';
 }
 
 // Initialize app when page loads

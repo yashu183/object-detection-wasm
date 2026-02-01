@@ -297,6 +297,57 @@
         .hidden {
             display: none;
         }
+
+        .mode-toggle {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .mode-btn {
+            padding: 12px 24px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .mode-btn.active {
+            background: #644ff0;
+            color: white;
+            border-color: #644ff0;
+        }
+
+        .mode-btn:hover:not(.active) {
+            border-color: #644ff0;
+            color: #644ff0;
+        }
+
+        .camera-area {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .camera-area.hidden {
+            display: none !important;
+        }
+
+        #cameraVideo {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 10px;
+        }
+
+        #detectionCanvas {
+            border-radius: 10px;
+        }
     </style>
 </head>
 <body>
@@ -313,6 +364,14 @@
                 <div class="image-container">
                     <div>
                         <h3>Image & Detections</h3>
+                        
+                        <!-- Mode Toggle Buttons -->
+                        <div class="mode-toggle" style="margin-bottom: 20px; text-align: center;">
+                            <button id="imageMode" class="mode-btn active">Image Upload</button>
+                            <button id="cameraMode" class="mode-btn">Live Camera</button>
+                        </div>
+                        
+                        <!-- Image Upload Area -->
                         <div id="uploadArea" class="upload-area">
                             <input type="file" id="imageInput" class="file-input" accept="image/*" style="display: none;">
                             <div class="upload-icon">
@@ -325,6 +384,14 @@
                                 Supports PNG, JPG & WEBP up to any size
                             </div>
                         </div>
+                        
+                        <!-- Camera Area -->
+                        <div id="cameraArea" class="camera-area hidden">
+                            <video id="cameraVideo" autoplay muted playsinline style="max-width: 100%; border-radius: 10px;"></video>
+                            <canvas id="detectionCanvas" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+                        </div>
+                        
+                        <!-- Image Display -->
                         <div id="imageDisplay" class="image-display hidden">
                         </div>
                     </div>
@@ -332,6 +399,11 @@
                     <div id="buttonContainer" class="hidden">
                         <button id="detectBtn" class="detect-btn">Detect Objects</button>
                         <button id="clearBtn" class="detect-btn hidden" style="background: #dc3545; margin-left: 10px;">Clear Results</button>
+                    </div>
+                    
+                    <div id="cameraControls" class="hidden" style="text-align: center; margin-top: 20px;">
+                        <button id="startCameraBtn" class="detect-btn">📹 Start Camera</button>
+                        <button id="stopCameraBtn" class="detect-btn hidden" style="background: #dc3545; margin-left: 10px;">⏹ Stop Camera</button>
                     </div>
                 </div>
 
@@ -355,9 +427,10 @@
                             <div class="label">Model Size</div>
                         </div>
                     </div>
+                    
+                    <h3>Results</h3>
                     <div class="detections-list" id="detectionsList">
-                        <h3>Results</h3>
-                        <p style="color: #666; margin-bottom: 20px; text-align: center;">Run detection to see results</p>
+                        <p style="color: #666; margin: 20px 0; text-align: center;">Run detection to see results</p>
                     </div>
                 </div>
             </div>

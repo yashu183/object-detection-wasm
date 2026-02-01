@@ -28,8 +28,11 @@ const colors = [
 
 // DOM elements
 const imageInput = document.getElementById('imageInput');
+const uploadArea = document.getElementById('uploadArea');
 const detectBtn = document.getElementById('detectBtn');
-const sampleBtn = document.getElementById('sampleBtn');
+const clearBtn = document.getElementById('clearBtn');
+const buttonContainer = document.getElementById('buttonContainer');
+
 const statusEl = document.getElementById('status');
 const imageDisplay = document.getElementById('imageDisplay');
 const detectionsList = document.getElementById('detectionsList');
@@ -41,10 +44,20 @@ const processingTimeEl = document.getElementById('processingTime');
 async function initApp() {
     console.log('🚀 Initializing YOLO Object Detection App...');
     
+    // Check if elements exist
+    console.log('detectBtn exists:', !!detectBtn);
+    console.log('clearBtn exists:', !!clearBtn);
+    
     // Setup event listeners
     imageInput.addEventListener('change', handleImageUpload);
+    uploadArea.addEventListener('click', () => imageInput.click());
     detectBtn.addEventListener('click', detectObjects);
-    sampleBtn.addEventListener('click', loadSampleImage);
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearDetectionResults);
+    } else {
+        console.error('clearBtn element not found!');
+    }
+
     
     // Configure ONNX Runtime
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/';
@@ -57,7 +70,7 @@ async function initApp() {
 async function loadModel() {
     try {
         statusEl.className = 'status loading';
-        statusEl.textContent = '⏳ Loading YOLOv8 model... (~6MB download)';
+        statusEl.textContent = 'Loading YOLOv8 model... (~6MB download)';
         
         console.log('Loading ONNX model...');
         
@@ -70,20 +83,20 @@ async function loadModel() {
         isModelLoaded = true;
         
         statusEl.className = 'status success';
-        statusEl.textContent = '✅ YOLOv8 model loaded! Ready for object detection.';
+        statusEl.textContent = 'YOLOv8 model loaded! Ready for object detection.';
         
         // Enable UI elements
         detectBtn.disabled = false;
-        sampleBtn.disabled = false;
+
         
-        console.log('✅ Model loaded successfully');
+        console.log('Model loaded successfully');
         console.log('Input shape:', session.inputNames);
         console.log('Output shape:', session.outputNames);
         
     } catch (error) {
-        console.error('❌ Model loading error:', error);
+        console.error('Model loading error:', error);
         statusEl.className = 'status error';
-        statusEl.textContent = '❌ Error loading model. Please ensure yolov8n.onnx is available.';
+        statusEl.textContent = 'Error loading model. Please ensure yolov8n.onnx is available.';
     }
 }
 
@@ -99,14 +112,7 @@ function handleImageUpload(event) {
     reader.readAsDataURL(file);
 }
 
-// Load sample image
-function loadSampleImage() {
-    // Create a sample image with common objects
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => loadImageFromElement(img);
-    img.src = 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80';
-}
+
 
 // Load image from data URL
 function loadImageFromDataUrl(dataUrl) {
@@ -121,6 +127,15 @@ function loadImageFromElement(img) {
     
     // Clear previous results
     clearResults();
+    
+    // Hide upload area and show image display
+    uploadArea.classList.add('hidden');
+    imageDisplay.classList.remove('hidden');
+    buttonContainer.classList.remove('hidden');
+    
+    // Show detect button and hide clear button (reset to initial state)
+    detectBtn.classList.remove('hidden');
+    clearBtn.classList.add('hidden');
     
     // Display the image
     imageDisplay.innerHTML = '';
@@ -167,11 +182,11 @@ async function detectObjects() {
         detectBtn.textContent = '🔍 Detecting...';
         
         // Preprocess image
-        console.log('🔄 Preprocessing image...');
+        console.log('Preprocessing image...');
         const preprocessed = preprocessImage(currentImage);
         
         // Run inference
-        console.log('🧠 Running YOLO inference...');
+        console.log('Running YOLO inference...');
         const inferenceStart = performance.now();
         const detections = await runInference(preprocessed);
         const inferenceTime = performance.now() - inferenceStart;
@@ -186,15 +201,20 @@ async function detectObjects() {
         // Update detections list
         updateDetectionsList(detections);
         
-        console.log(`✅ Detection complete: ${detections.length} objects in ${totalTime.toFixed(1)}ms`);
+        // Show clear button and hide detect button
+        console.log('Showing clear button, hiding detect button');
+        detectBtn.classList.add('hidden');
+        clearBtn.classList.remove('hidden');
+        
+        console.log(`Detection complete: ${detections.length} objects in ${totalTime.toFixed(1)}ms`);
         
     } catch (error) {
-        console.error('❌ Detection error:', error);
+        console.error('Detection error:', error);
         statusEl.className = 'status error';
-        statusEl.textContent = '❌ Detection failed: ' + error.message;
+        statusEl.textContent = 'Detection failed: ' + error.message;
     } finally {
         detectBtn.disabled = false;
-        detectBtn.textContent = '🚀 Detect Objects';
+        detectBtn.textContent = 'Detect Objects';
     }
 }
 
@@ -439,7 +459,7 @@ function updateMetrics(inferenceTime, totalTime, objectCount) {
 // Update detections list
 function updateDetectionsList(detections) {
     if (detections.length === 0) {
-        detectionsList.innerHTML = '<p style="color: #666; text-align: center;">No objects detected</p>';
+        detectionsList.innerHTML = '<h3>Results</h3> <p style="color: #666; margin-bottom: 20px; text-align: center;">No objects detected</p>';
         return;
     }
     
@@ -450,7 +470,27 @@ function updateDetectionsList(detections) {
         </div>
     `).join('');
     
-    detectionsList.innerHTML = html;
+    detectionsList.innerHTML = `<h3>Results</h3> ${html}`;
+}
+
+// Clear detection results and show detect button again
+function clearDetectionResults() {
+    console.log('Clearing detection results');
+    // Clear results
+    clearResults();
+    
+    // Reset current image
+    currentImage = null;
+    
+    // Show upload area and hide image display
+    uploadArea.classList.remove('hidden');
+    imageDisplay.classList.add('hidden');
+    buttonContainer.classList.add('hidden');
+    
+    // Clear image display content
+    imageDisplay.innerHTML = '';
+    
+    console.log('Detection results cleared - back to upload state');
 }
 
 // Clear results
@@ -458,7 +498,7 @@ function clearResults() {
     inferenceTimeEl.textContent = '-';
     processingTimeEl.textContent = '-';
     objectCountEl.textContent = '-';
-    detectionsList.innerHTML = '<p style="color: #666; text-align: center;">Run detection to see results</p>';
+    detectionsList.innerHTML = '<h3>Results</h3> <p style="color: #666; margin-bottom: 20px; text-align: center;">Run detection to see results</p>';
 }
 
 // Initialize app when page loads

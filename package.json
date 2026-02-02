@@ -21,16 +21,8 @@
     "real-time",
     "browser"
   ],
-  "author": "Your Name",
+  "author": "Yashwanth C",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/yolo-object-detection.git"
-  },
-  "bugs": {
-    "url": "https://github.com/yourusername/yolo-object-detection/issues"
-  },
-  "homepage": "https://github.com/yourusername/yolo-object-detection#readme",
   "devDependencies": {
     "http-server": "^14.1.1"
   },

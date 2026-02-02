@@ -112,7 +112,6 @@ async function loadModel() {
         // Enable UI elements
         detectBtn.disabled = false;
 
-        
         console.log('Model loaded successfully');
         console.log('Input shape:', session.inputNames);
         console.log('Output shape:', session.outputNames);

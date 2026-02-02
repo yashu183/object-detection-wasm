@@ -67,6 +67,7 @@ def export_yolo_model(model_size='n', output_path=None):
             simplify=True,  # Simplify the model
             opset=12,      # ONNX opset version (compatible with ONNX Runtime Web)
             imgsz=640,     # Input image size
+            half=True,     # Use FP16 for ~50% size reduction with minimal accuracy loss
         )
         
         # Check if export was successful
